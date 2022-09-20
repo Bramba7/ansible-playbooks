@@ -2,7 +2,7 @@
 - hosts: cloud 
   become: true
   vars:
-  - password: 'toor'
+  - password: 'root'
   - username: 'bramba'
   - sshkeypath: '~/.ssh/linode.pub'
   - new_hostname: 'linode-lab'
