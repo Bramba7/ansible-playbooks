@@ -1,0 +1,170 @@
+---
+- hosts: cloud 
+  become: true
+  vars:
+  - password: 'toor'
+  - username: 'bramba'
+  - sshkeypath: '~/.ssh/linode.pub'
+  - new_hostname: 'linode-lab'
+  
+  tasks:
+  - name: Add a new user
+    user:
+     name: "{{ username }}"
+     shell: /bin/bash
+     password: "{{ password | password_hash('sha512') }}"
+  - name: update hostnames
+    hostname:
+      name: "{{ new_hostname }}"
+  - name: Add user to the sudoers
+    copy:
+     dest: "/etc/sudoers.d/{{ username }}"
+     content: "{{ username }}  ALL=(ALL)  NOPASSWD: ALL"
+  - name: Deploy SSH Key
+    authorized_key: user="{{ username }}"
+                    key="{{ lookup('file', "{{ sshkeypath }}") }}"
+                    state=present
+  - name: Disable Password Authentication
+    lineinfile:
+     dest=/etc/ssh/sshd_config
+     regexp="^PasswordAuthentication"
+     line="PasswordAuthentication no"
+     state=present
+     backup=yes
+  - name: Disable Root Login
+    lineinfile:
+     dest=/etc/ssh/sshd_config
+     regexp='^PermitRootLogin'
+     line="PermitRootLogin no"
+     state=present
+     backup=yes
+
+     
+  - name: Install packages
+    apt:
+      name: "{{ packages }}"
+      state: present
+      update_cache: yes
+    vars:
+      packages:
+      - apt-transport-https
+      - wget
+      - neovim
+      - tree
+      - neofetch
+      - zsh
+      - unzip
+      - bat
+      - ca-certificates
+      - curl
+      - gnupg-agent
+      - fonts-hack
+      - git
+      - htop
+      - software-properties-common
+
+
+# *** Oh-My-zsh ***
+
+  - name: Installing Oh-My-zsh
+    become: yes
+    become_user: '{{ username }}'
+    command: sh -c 'curl -fsL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh | bash'
+
+  - name: Changing Default Shell to ZSH
+    become: yes
+    user: 
+      name: '{{ username }}'
+      shell: /bin/zsh 
+
+  - name: Changing Default ZSH Theme to Agnoster
+    lineinfile:
+      path: '/home/{{ username }}/.zshrc'
+      regexp: '^ZSH_THEME='
+      line: 'ZSH_THEME="agnoster"'
+
+  - name: Creating ZSH Completion folder
+    file:
+      path: '/home/{{ username }}/.oh-my-zsh/completions'
+      state: directory
+      mode: 0755
+
+  - name: Adding autoload to compinit
+    lineinfile:
+      path: '/home/{{ username }}/.zshrc'
+      line: 'autoload -U compinit && compinit'
+      state: present
+
+  - name: ZSH alias nvim
+    lineinfile: 
+      path: "/home/{{ username }}/.zshrc"
+      line: "alias vim='nvim'"  
+      state: present
+
+  - name: ZSH alias Bat
+    lineinfile: 
+      path: "/home/{{ username }}/.zshrc"
+      line: "alias bat='batcat'"  
+      state: present
+
+# *** Dotfiles ***  
+
+  - name: Delete all dotfiles
+    file:
+      path: "/home/{{ username}}/.config"
+      state: absent    
+
+  - name: Clone a github repository dotfiles
+    git:
+      repo: https://github.com/Bramba7/dotfiles.git 
+      dest: /home/{{ username }}/.config
+      clone: yes
+      update: yes
+
+# *** Nvim ***
+
+  - name: Dow vm-plug
+    become: yes
+    become_user: '{{ username }}'
+    command: sh -c 'curl -fLo "${XDG_DATA_HOME:-$HOME/.local/share}"/nvim/site/autoload/plug.vim --create-dirs https://raw.githubusercontent.com/junegunn/vim-plug/master/plug.vim'
+ 
+  - name: Install vm-plug
+    become: yes
+    become_user: '{{ username }}'
+    command: nvim +'PlugInstall --sync' +qa
+
+# *** Docker ***
+
+  - name: Add an apt signing key for Docker
+    apt_key:
+      url: https://download.docker.com/linux/ubuntu/gpg
+      state: present
+
+  - name: Add apt repository for stable version
+    apt_repository:
+      repo: deb [arch=amd64] https://download.docker.com/linux/ubuntu xenial stable
+      state: present
+
+  - name: Install docker and its dependecies
+    apt: 
+      name: "{{ packages }}"
+      state: present
+      update_cache: yes
+    vars:
+      packages:
+      - docker-ce 
+      - docker-ce-cli 
+      - containerd.io
+    notify:
+      - docker status
+
+  - name: Add user to docker group
+    user:
+      name: "{{ username }}"
+      group: docker
+
+  handlers:
+  - name: docker status
+    service: name=docker state=started
+  - name: restart ssh
+    service: name=sshd state=restarted
