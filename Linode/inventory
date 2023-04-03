@@ -1,8 +1,2 @@
 [cloud]
-173.255.205.233
-
-[masters]
-master ansible_host=
-
-[workers]
-worker ansible_host=
+<IP>
