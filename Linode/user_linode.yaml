@@ -2,11 +2,24 @@
 - hosts: cloud 
   become: true
   vars:
-  - password: 'root'
-  - username: 'bramba'
   - sshkeypath: '~/.ssh/linode.pub'
-  - new_hostname: 'linode-lab'
   
+  vars_prompt:
+  - name: "username"
+    prompt: "What is your username?"
+    private: false
+
+  - name: password
+    prompt: Enter the password
+    private: true
+    encrypt: sha512_crypt
+    confirm: true
+    salt_size: 7
+
+  - name: "new_hostname"
+    prompt: "What is your hostname?"
+    private: false
+
   tasks:
   - name: Add a new user
     user:
@@ -24,20 +37,31 @@
     authorized_key: user="{{ username }}"
                     key="{{ lookup('file', "{{ sshkeypath }}") }}"
                     state=present
-  - name: Disable Password Authentication
+
+  - name: Update SSH configuration to be more secure (thanks Jeff!)
     lineinfile:
-     dest=/etc/ssh/sshd_config
-     regexp="^PasswordAuthentication"
-     line="PasswordAuthentication no"
-     state=present
-     backup=yes
-  - name: Disable Root Login
-    lineinfile:
-     dest=/etc/ssh/sshd_config
-     regexp='^PermitRootLogin'
-     line="PermitRootLogin no"
-     state=present
-     backup=yes
+      dest: "/etc/ssh/sshd_config"
+      regexp: "{{ item.regexp }}"
+      line: "{{ item.line }}"
+      state: present
+      validate: 'sshd -T -f %s'
+      mode: 0644
+    with_items:
+      - regexp: "^PasswordAuthentication"
+        line: "PasswordAuthentication no"
+      - regexp: "^PermitRootLogin"
+        line: "PermitRootLogin no"
+      - regexp: "^UseDNS"
+        line: "UseDNS no"
+      - regexp: "^PermitEmptyPasswords"
+        line: "PermitEmptyPasswords no"
+      - regexp: "^ChallengeResponseAuthentication"
+        line: "ChallengeResponseAuthentication no"
+      - regexp: "^GSSAPIAuthentication"
+        line: "GSSAPIAuthentication no"
+      - regexp: "^X11Forwarding"
+        line: "X11Forwarding no"
+    notify: restart ssh
 
      
   - name: Install packages
@@ -53,11 +77,13 @@
       - tree
       - neofetch
       - zsh
+      - lsb-release
       - unzip
       - bat
+      - exa
       - ca-certificates
       - curl
-      - gnupg-agent
+      - gnupg
       - fonts-hack
       - git
       - htop
@@ -95,16 +121,10 @@
       line: 'autoload -U compinit && compinit'
       state: present
 
-  - name: ZSH alias nvim
+  - name: ZSH alias
     lineinfile: 
       path: "/home/{{ username }}/.zshrc"
-      line: "alias vim='nvim'"  
-      state: present
-
-  - name: ZSH alias Bat
-    lineinfile: 
-      path: "/home/{{ username }}/.zshrc"
-      line: "alias bat='batcat'"  
+      line: "alias vim='nvim'\nalias ls='exa --icons --sort=type'\nalias cat='batcat'"  
       state: present
 
 # *** Dotfiles ***  
@@ -137,34 +157,48 @@
 
   - name: Add an apt signing key for Docker
     apt_key:
-      url: https://download.docker.com/linux/ubuntu/gpg
+      url: https://download.docker.com/linux/{{ ansible_distribution| lower }}/gpg
       state: present
+    when: ansible_os_family == "Debian"
 
   - name: Add apt repository for stable version
     apt_repository:
-      repo: deb [arch=amd64] https://download.docker.com/linux/ubuntu xenial stable
+      repo: deb [arch=amd64] https://download.docker.com/linux/{{ ansible_distribution| lower }} {{ ansible_distribution_release }} stable
       state: present
-
-  - name: Install docker and its dependecies
+    when: ansible_os_family == "Debian"
+    
+  - name: Install docker and its dependencies
     apt: 
       name: "{{ packages }}"
       state: present
       update_cache: yes
     vars:
-      packages:
+      packages:   
       - docker-ce 
       - docker-ce-cli 
       - containerd.io
-    notify:
-      - docker status
+      - docker-buildx-plugin 
+      - docker-compose-plugin
+    when: ansible_os_family == "Debian"
 
   - name: Add user to docker group
     user:
       name: "{{ username }}"
       group: docker
-
+    notify:
+      - docker status
+    
+  - name: Print a message
+    ansible.builtin.debug:
+      msg: 'ssh {{ username }}@{{ ansible_ssh_host }}'
+  
   handlers:
   - name: docker status
-    service: name=docker state=started
+    service: 
+      name: docker 
+      state: started
+
   - name: restart ssh
-    service: name=sshd state=restarted
+    service: 
+      name: sshd 
+      state: restarted
